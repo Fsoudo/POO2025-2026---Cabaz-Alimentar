@@ -1,0 +1,240 @@
+# Pseudocódigo e Estruturação do Trabalho Final PO2
+
+Este documento descreve uma arquitetura em pseudocódigo (e esqueleto Java) focada em cumprir todas as regras impostas, especialmente a **arquitetura MVC** e a **proibição de fazer lógica de negócio na View**.
+
+---
+
+## 1. O Modelo Base (Domínio Cêntrico)
+
+A primeira coisa a desenhar são os itens. Eles gerem o próprio preço.
+
+```java
+// ENUMERAÇÃO PARA O TIPO DE COMIDA
+enum FoodGroup {
+    PROTEIN, CARBS, VEGGIES, FRUITS
+}
+
+// ---------------------------------------------------------
+// CLASSE ABSTRATA
+abstract class FoodItem {
+    final String id;
+    final String name;
+    final double basePrice;
+    final FoodGroup category;
+    final int kcal;
+
+    // Construtor obriga a usar 'this.'
+    public FoodItem(String id, String name, double basePrice, FoodGroup category, int kcal) {
+        this.id = id;
+        this.name = name;
+        this.basePrice = basePrice;
+        this.category = category;
+        this.kcal = kcal;
+    }
+
+    // Método Abstrato de Preço (Garante que instanceof não é preciso!)
+    public abstract double getFinalPrice();
+    
+    // Devolve uma interface (botão/painel) pronta? 
+    // NÃO! O modelo não deve saber de botões JavaFX. 
+}
+
+// ---------------------------------------------------------
+// PRODUTO EMBALADO
+class PackagedFood extends FoodItem {
+    final String material; // "Plastic", "Paper", "Glass"
+    
+    // Preço Base = Preço Único
+    @Override
+    public double getFinalPrice() {
+        return this.basePrice; 
+    }
+}
+
+// ---------------------------------------------------------
+// PRODUTO A GRANEL
+class BulkFood extends FoodItem {
+    int currentWeightGrams; // Vai iniciar a 0 e ser definido depois.
+    
+    // setter para peso
+    public void setWeight(int grams) {
+        this.currentWeightGrams = grams;
+    }
+
+    // Preço = (PreçoBase / 1000) * pesoAtualGrama
+    @Override
+    public double getFinalPrice() {
+        return (this.basePrice / 1000.0) * this.currentWeightGrams; 
+    }
+}
+```
+
+---
+
+## 2. O Modelo Central: `BasketModel` (O Cerebro)
+
+A UI não toma decisões. A UI chama o `BasketModel`. O `BasketModel` notifica a UI (Observer Pattern).
+
+```java
+class BasketModel {
+    final List<FoodItem> cart = new ArrayList<>();
+    final List<BasketObserver> observers = new ArrayList<>();
+
+    // O Controller avisa que um item foi escolhido.
+    // O Model aceita, adiciona à lista e notifica quem estiver a observar a lista (A interface).
+    public void addItem(FoodItem item) {
+        this.cart.add(item);
+        this.notifyObservers(); // Dispara o reset da View.
+    }
+
+    // O UI pede o Preço Total. Notar o uso do getFinalPrice() sem um único "instanceof"
+    public double getTotalPrice() {
+        double total = 0.0;
+        for (FoodItem item : this.cart) {
+            total = total + item.getFinalPrice(); // RBP2: Polimorfismo puro.
+        }
+        return total;
+    }
+
+    public int getTotalCalories() { ... }
+
+    // RBP1: A View/Controller NÃO avalia se os emblemas se ativam. O Model avalia e devolve booleanos.
+    public boolean isODS3Achieved() {
+        // Lógica: Percorre cart, conta itens verdes. Se peso/qtd > meta, return true;
+    }
+
+    public void addObserver(BasketObserver obs) {
+         this.observers.add(obs);
+    }
+
+    private void notifyObservers() {
+         for(BasketObserver obs : this.observers) {
+             obs.modelChanged(); // Avisa o ecrã para se redesenhar
+         }
+    }
+}
+```
+
+---
+
+## 3. Leitura do Ficheiro CSV
+
+```java
+class InventoryReader {
+    public List<FoodItem> readFile(String path) {
+        List<FoodItem> inventory = new ArrayList<>();
+        List<String> ignoredLines = new ArrayList<>();
+        
+        // java.nio ou java.io apenas
+        File file = new File(path);
+        Scanner scanner = new Scanner(file);
+        
+        while (scanner.hasNextLine()) {
+            String line = scanner.nextLine();
+            try {
+                // Fazer parse. Ex: CSV separado por vírgula.
+                // Se categoria = BULK instanciar BulkFood.
+                // Se PACKAGED instanciar PackagedFood.
+            } catch (Exception e) {
+                // Erro ao converter. Ignora e guarda.
+                ignoredLines.add(line);
+            }
+        }
+        
+        // No fim de tudo, se ignoredLines > 0, cria Alerta do JavaFX com o texto de ignoredLines.
+        return inventory;
+    }
+}
+```
+
+---
+
+## 4. O Sistema Gráfico (View + Controller)
+
+```java
+// O ecrã subscreve a observar o Modelo
+class MainView implements BasketObserver {
+    final BasketModel model;
+    
+    // UI Elements
+    GridPane catalogGrid;
+    Label totalCostLabel;
+    Label totalKcalLabel;
+    
+    public MainView(BasketModel model) {
+        this.model = model;
+        this.model.addObserver(this); // Ativa escuta.
+        this.setupUI();
+    }
+    
+    private void setupUI() {
+       // Carregar itens via InventoryReader.
+       // Para cada item lido, criar um Botão Gráfico (UI_Tile) e adicionar ao catalogGrid
+       
+       for(FoodItem f : loadedInventory) {
+           Button btn = new Button(f.name + " | €" + f.basePrice);
+           
+           // EVENTO DE CLIQUE DO UTILIZADOR
+           btn.setOnAction(event -> {
+               // RBP1/RPB2: NÃO FAZER LOGICA DE NEGOCIO AQUI.
+               // Como saber se precisa do menu do TextInputDialog do peso (se for granel)?
+               // Truque Polimórfico: O Item já sabe quem é.
+               
+               if (f.requiresWeightInteraction()) { // Implementar este booleano virtual nas food items
+                   int grams = askUserForGramsDialog(); 
+                   // Como o 'f' não pode perder a referência limpa para o inventario, clona-se ou passa valores.
+                   ((BulkFood)f).setWeight(grams); 
+               }
+               
+               // Informa o Model
+               this.model.addItem(f); 
+           });
+       }
+    }
+
+    // Método acionado pelo 'notifyObservers' do Model
+    @Override
+    public void modelChanged() {
+        // Redesenhar a zona do carrinho
+        this.totalCostLabel.setText( String.valueOf(this.model.getTotalPrice()) );
+        this.totalKcalLabel.setText( String.valueOf(this.model.getTotalCalories()) );
+        
+        // ODS 
+        if (this.model.isODS3Achieved()) {
+            // Ligar ícone ODS 3 a amarelo/verde
+        }
+    }
+}
+```
+
+---
+
+## 5. Salvar o Recibo
+
+Quando clicar `Finalizar Compra`:
+
+```java
+class ReceiptExporter {
+    public void export(BasketModel model) {
+        // Criar ficheiro receipt_AAAAMMDD.txt
+        // Escrever cada FoodItem
+        for(FoodItem f : model.cart) {
+           // f.name | f.weight/qnt | f.getFinalPrice()
+        }
+        // Escrever Model.getTotalPrice()
+        // If (Model.isODS3Achieved()) -> Escrever ("Meta ODS Cumprida!")
+    }
+}
+```
+
+### Resumo do Truque Polimórfico Crítico
+Se fores penalizado por fazeres um `instanceof PackagedFood` na tua interfaçe para saber como adicionar coisas, perde-se a nota. A solução base passa por implementar um método abstrato no `FoodItem`:
+
+`public abstract boolean requiresWeightInteraction();`
+
+- Em `PackagedFood`: `return false;`
+- Em `BulkFood`: `return true;`
+
+Assim o Controller da View simplesmente diz:
+`if(item.requiresWeightInteraction()) { pedirPeso() }`
+Sem nunca quebrar a regra OOP cega estipulada!
